@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hamina Map Exporter Pro</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; padding: 20px; background: #f4f7f6; color: #333; }
+        .container { max-width: 1000px; margin: 0 auto; background: white; padding: 30px; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        h1 { margin-top: 0; color: #2c3e50; font-size: 24px; margin-bottom: 5px;}
+        p.subtitle { font-size: 14px; color: #666; margin-top: 0; margin-bottom: 25px; }
+        .step { margin-bottom: 20px; padding: 15px; border-left: 4px solid #4687f0; background: #f9fbfd; border-radius: 0 4px 4px 0; }
+        input[type="file"] { margin-top: 10px; font-size: 14px; }
+        
+        button { background: #349780; color: white; border: none; padding: 10px 16px; font-size: 14px; border-radius: 4px; cursor: pointer; font-weight: bold; transition: background 0.2s;}
+        button:hover { background: #2b7a67; }
+        button:disabled { background: #95a5a6; cursor: not-allowed; }
+        
+        .btn-small { padding: 6px 12px; font-size: 12px; background: #7f8c8d; margin-right: 5px; }
+        .btn-small:hover { background: #6c7a7d; }
+        .btn-primary { background: #4687f0; font-size: 16px; padding: 12px 20px; margin-top: 15px;}
+        .btn-primary:hover { background: #356ac3; }
+
+        .status { margin-top: 10px; font-size: 14px; font-weight: bold; }
+        
+        .checkbox-list { margin-top: 15px; max-height: 350px; overflow-y: auto; border: 1px solid #ddd; padding: 10px; border-radius: 4px; background: white; }
+        .floor-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #eee; }
+        .floor-item:last-child { border-bottom: none; }
+        .floor-item label { cursor: pointer; user-select: none; font-weight: 500;}
+        .scale-control { font-size: 12px; color: #555; display: flex; align-items: center; gap: 8px;}
+        .scale-control input { width: 60px; padding: 4px; border: 1px solid #ccc; border-radius: 3px; text-align: center;}
+        
+        #previews { margin-top: 30px; border-top: 2px solid #eee; padding-top: 20px; display: none; }
+        
+        .global-controls { background: #e8f4f8; padding: 15px; border-radius: 6px; margin-bottom: 20px; border: 1px solid #bce0ec; display: flex; align-items: center; justify-content: space-between;}
+        .slider-container { display: flex; align-items: center; gap: 10px; }
+        .slider-container input[type="range"] { width: 200px; }
+        .scale-val { font-weight: bold; color: #2c3e50; width: 40px; }
+
+        .preview-card { margin-bottom: 30px; background: #f9f9f9; padding: 15px; border-radius: 6px; border: 1px solid #eaeaea;}
+        .preview-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid #ddd;}
+        .preview-header h3 { margin: 0; font-size: 18px; color: #333; }
+        .preview-canvas { max-width: 100%; height: auto; border: 1px solid #ccc; border-radius: 4px; display: block; box-shadow: 0 2px 8px rgba(0,0,0,0.1); background: white;}
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>Hamina AP Placement Map Exporter</h1>
+    <p class="subtitle">Live preview scaling, custom per-floor multipliers and batch PNG export.</p>
+    
+    <div class="step" id="step1">
+        <strong>Step 1:</strong> Upload your OpenIntent <code>.zip</code> file.
+        <br>
+        <input type="file" id="zipInput" accept=".zip">
+        <div id="loadingStatus" class="status" style="color: #e67e22;"></div>
+    </div>
+
+    <div class="step" id="step2" style="display:none;">
+        <strong>Step 2:</strong> Select Floor Plans to Load.
+        <div style="margin-top: 10px;">
+            <button class="btn-small" onclick="toggleAll(true)">Select All</button>
+            <button class="btn-small" onclick="toggleAll(false)">Deselect All</button>
+        </div>
+        <div class="checkbox-list" id="floorList"></div>
+        
+        <button id="loadMapsBtn" class="btn-primary">Load Map Previews</button>
+        <div id="renderStatus" class="status" style="color: #e67e22;"></div>
+    </div>
+
+    <div id="previews">
+        <h2>Map Previews & Adjustment</h2>
+        
+        <div class="global-controls">
+            <div>
+                <strong>Global Icon Scale:</strong> Adjust all maps simultaneously.
+            </div>
+            <div class="slider-container">
+                <input type="range" id="globalScaleSlider" min="0.1" max="5.0" step="0.1" value="1.0">
+                <span class="scale-val" id="globalScaleText">1.0x</span>
+            </div>
+        </div>
+
+        <button id="downloadZipBtn" style="margin-bottom: 20px; font-size: 16px; width: 100%;">⬇️ Download High-Res ZIP</button>
+        <div id="previewContainer"></div>
+    </div>
+</div>
+
+<script>
+    let openIntentData = null;
+    let zipData = null; 
+    let activeMaps = []; 
+    let globalScale = 1.0;
+
+    const AP_RADIUS_BASE = 22;
+
+    const statusEl = document.getElementById('loadingStatus');
+    const renderStatusEl = document.getElementById('renderStatus');
+    const previewSection = document.getElementById('previews');
+    const previewContainer = document.getElementById('previewContainer');
+    const globalScaleSlider = document.getElementById('globalScaleSlider');
+    const globalScaleText = document.getElementById('globalScaleText');
+
+    // --- 1. Load ZIP ---
+    document.getElementById('zipInput').addEventListener('change', async function(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+
+        statusEl.innerText = "Reading ZIP file...";
+        document.getElementById('step2').style.display = 'none';
+        previewSection.style.display = 'none';
+
+        try {
+            zipData = await JSZip.loadAsync(file);
+            
+            let jsonFile = null;
+            zipData.forEach((relativePath, zipEntry) => {
+                if (relativePath.endsWith('.json') && !relativePath.includes('__MACOSX')) {
+                    jsonFile = zipEntry;
+                }
+            });
+
+            if (!jsonFile) {
+                throw new Error("Could not find the OpenIntent .json file in the ZIP.");
+            }
+
+            statusEl.innerText = "Parsing project data...";
+            const jsonText = await jsonFile.async("string");
+            openIntentData = JSON.parse(jsonText);
+
+            populateFloors();
+            statusEl.innerText = "Project loaded successfully!";
+            statusEl.style.color = "#349780";
+        } catch (err) {
+            console.error(err);
+            statusEl.innerText = "Error: " + err.message;
+            statusEl.style.color = "red";
+        }
+    });
+
+    // --- 2. Checkboxes ---
+    function populateFloors() {
+        const list = document.getElementById('floorList');
+        list.innerHTML = '';
+        
+        if(openIntentData.floorplans) {
+            openIntentData.floorplans.forEach((fp, index) => {
+                const itemDiv = document.createElement('div');
+                itemDiv.className = 'floor-item';
+
+                // Left side: Checkbox + Name
+                const leftDiv = document.createElement('div');
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.value = fp.name;
+                checkbox.dataset.index = index; 
+                checkbox.id = `cb_${index}`;
+                checkbox.className = 'floor-checkbox';
+                checkbox.checked = true; 
+                
+                const label = document.createElement('label');
+                label.htmlFor = `cb_${index}`;
+                label.innerText = ' ' + fp.name;
+                
+                leftDiv.appendChild(checkbox);
+                leftDiv.appendChild(label);
+
+                // Right side: Scale Input
+                const rightDiv = document.createElement('div');
+                rightDiv.className = 'scale-control';
+                rightDiv.innerHTML = `
+                    Icon Scale: 
+                    <input type="number" id="scale_${index}" value="1.0" step="0.1" min="0.1" max="10.0">
+                `;
+
+                itemDiv.appendChild(leftDiv);
+                itemDiv.appendChild(rightDiv);
+                list.appendChild(itemDiv);
+            });
+        }
+        document.getElementById('step2').style.display = 'block';
+    }
+
+    function toggleAll(state) {
+        document.querySelectorAll('.floor-checkbox').forEach(cb => cb.checked = state);
+    }
+
+    // --- 3. Load & Initialize Previews ---
+    document.getElementById('loadMapsBtn').addEventListener('click', async function() {
+        const selectedCheckboxes = Array.from(document.querySelectorAll('.floor-checkbox:checked'));
+        if (selectedCheckboxes.length === 0) {
+            renderStatusEl.innerText = "Please select at least one floor plan.";
+            renderStatusEl.style.color = "red";
+            return;
+        }
+
+        const btn = document.getElementById('loadMapsBtn');
+        btn.disabled = true;
+        
+        // Cleanup old memory
+        activeMaps.forEach(map => URL.revokeObjectURL(map.imgUrl));
+        activeMaps = [];
+        previewContainer.innerHTML = '';
+        previewSection.style.display = 'block';
+
+        try {
+            for (let i = 0; i < selectedCheckboxes.length; i++) {
+                const floorName = selectedCheckboxes[i].value;
+                const floorIndex = selectedCheckboxes[i].dataset.index;
+                
+                // Get the user's custom scale modifier for this specific floor
+                const customScale = parseFloat(document.getElementById(`scale_${floorIndex}`).value) || 1.0;
+
+                renderStatusEl.innerText = `Loading image ${i + 1} of ${selectedCheckboxes.length}: ${floorName}...`;
+                renderStatusEl.style.color = "#4687f0";
+
+                const floorObj = openIntentData.floorplans.find(f => f.name === floorName);
+                
+                // Extract Image Blob from ZIP
+                const uriParts = floorObj.map_uri.split('/');
+                const expectedFilename = decodeURIComponent(uriParts[uriParts.length - 1]);
+
+                let imageEntry = null;
+                zipData.forEach((relativePath, zipEntry) => {
+                    if (relativePath.includes(expectedFilename)) imageEntry = zipEntry;
+                });
+
+                if (!imageEntry) {
+                    console.warn(`Skipping ${floorName}: Image not found.`);
+                    continue;
+                }
+
+                const blob = await imageEntry.async("blob");
+                const imgUrl = URL.createObjectURL(blob);
+                
+                // Wait for image to load to get dimensions
+                const img = await loadImage(imgUrl);
+                
+                // Setup Map Object
+                const mapData = {
+                    id: `map_${i}`,
+                    floorName: floorName,
+                    imgElement: img,
+                    imgUrl: imgUrl,
+                    nativeWidth: img.width,
+                    nativeHeight: img.height,
+                    localScale: customScale !== 1.0 ? customScale : null 
+                };
+                
+                activeMaps.push(mapData);
+                createPreviewCard(mapData);
+                renderPreviewCanvas(mapData);
+            }
+
+            renderStatusEl.innerText = "Maps loaded! Adjust sliders below and click Download.";
+            renderStatusEl.style.color = "#349780";
+        } catch (err) {
+            console.error(err);
+            renderStatusEl.innerText = "Error loading maps: " + err.message;
+            renderStatusEl.style.color = "red";
+        } finally {
+            btn.disabled = false;
+        }
+    });
+
+    function loadImage(url) {
+        return new Promise((resolve, reject) => {
+            const img = new Image();
+            img.onload = () => resolve(img);
+            img.onerror = () => reject(new Error("Image load failed"));
+            img.src = url;
+        });
+    }
+
+    // --- 4. UI & Canvas Rendering ---
+    
+    function createPreviewCard(map) {
+        const card = document.createElement('div');
+        card.className = 'preview-card';
+        card.id = `card_${map.id}`;
+        
+        const initialDisplayScale = map.localScale !== null ? map.localScale : globalScale;
+
+        card.innerHTML = `
+            <div class="preview-header">
+                <h3>${map.floorName}</h3>
+                <div class="slider-container">
+                    <span style="font-size:12px; color:#666;">Override:</span>
+                    <input type="range" id="slider_${map.id}" min="0.1" max="5.0" step="0.1" value="${initialDisplayScale}">
+                    <span class="scale-val" id="val_${map.id}">${initialDisplayScale.toFixed(1)}x</span>
+                    <button class="btn-small" id="reset_${map.id}" style="display:${map.localScale !== null ? 'inline-block' : 'none'};" title="Reset to Global Scale">↺ Reset</button>
+                </div>
+            </div>
+            <canvas id="canvas_${map.id}" class="preview-canvas"></canvas>
+        `;
+        previewContainer.appendChild(card);
+
+        // Bind Local Slider Events
+        const slider = document.getElementById(`slider_${map.id}`);
+        const valText = document.getElementById(`val_${map.id}`);
+        const resetBtn = document.getElementById(`reset_${map.id}`);
+
+        slider.addEventListener('input', (e) => {
+            const val = parseFloat(e.target.value);
+            valText.innerText = val.toFixed(1) + 'x';
+            map.localScale = val;
+            resetBtn.style.display = 'inline-block';
+            renderPreviewCanvas(map);
+        });
+
+        resetBtn.addEventListener('click', () => {
+            map.localScale = null;
+            slider.value = globalScale;
+            valText.innerText = globalScale.toFixed(1) + 'x';
+            resetBtn.style.display = 'none';
+            renderPreviewCanvas(map);
+        });
+    }
+
+    // Global Slider Event
+    globalScaleSlider.addEventListener('input', (e) => {
+        globalScale = parseFloat(e.target.value);
+        globalScaleText.innerText = globalScale.toFixed(1) + 'x';
+        
+        // Update all maps that haven't been manually overridden
+        activeMaps.forEach(map => {
+            if (map.localScale === null) {
+                const slider = document.getElementById(`slider_${map.id}`);
+                const valText = document.getElementById(`val_${map.id}`);
+                slider.value = globalScale;
+                valText.innerText = globalScale.toFixed(1) + 'x';
+                renderPreviewCanvas(map);
+            }
+        });
+    });
+
+    function renderPreviewCanvas(map) {
+        const canvas = document.getElementById(`canvas_${map.id}`);
+        const ctx = canvas.getContext('2d');
+
+        // To keep the browser fast, we render the UI preview at a max resolution of 1600px
+        const MAX_PREVIEW_DIM = 1600;
+        const maxNative = Math.max(map.nativeWidth, map.nativeHeight);
+        const previewRatio = maxNative > MAX_PREVIEW_DIM ? (MAX_PREVIEW_DIM / maxNative) : 1.0;
+
+        canvas.width = map.nativeWidth * previewRatio;
+        canvas.height = map.nativeHeight * previewRatio;
+
+        // Draw scaled background
+        ctx.drawImage(map.imgElement, 0, 0, canvas.width, canvas.height);
+
+        const currentScale = map.localScale !== null ? map.localScale : globalScale;
+        
+        // Draw APs (scaled down for the preview canvas)
+        drawAPsOnContext(ctx, map.floorName, map.nativeWidth, map.nativeHeight, currentScale, previewRatio);
+    }
+
+    // --- 5. High-Res Export ---
+    document.getElementById('downloadZipBtn').addEventListener('click', async function() {
+        const btn = document.getElementById('downloadZipBtn');
+        const originalText = btn.innerText;
+        btn.innerText = "⏳ Generating High-Res Maps... (This may take a moment)";
+        btn.disabled = true;
+
+        const outputZip = new JSZip();
+        const mapFolder = outputZip.folder("Hamina_Installer_Maps");
+
+        try {
+            // Process sequentially for memory safety on massive images
+            for (let i = 0; i < activeMaps.length; i++) {
+                const map = activeMaps[i];
+                
+                // Create a temporary off-screen canvas at FULL native resolution
+                const cvs = document.createElement('canvas');
+                cvs.width = map.nativeWidth;
+                cvs.height = map.nativeHeight;
+                const ctx = cvs.getContext('2d');
+
+                // Draw native image
+                ctx.drawImage(map.imgElement, 0, 0);
+
+                // Draw APs at full 1.0 resolution ratio
+                const finalScale = map.localScale !== null ? map.localScale : globalScale;
+                drawAPsOnContext(ctx, map.floorName, map.nativeWidth, map.nativeHeight, finalScale, 1.0);
+
+                // Export to Blob
+                const blob = await new Promise(resolve => cvs.toBlob(resolve, 'image/png', 1.0));
+                
+                const safeName = map.floorName.replace(/[^a-zA-Z0-9 -]/g, '_') + '_Installer_Map.png';
+                mapFolder.file(safeName, blob);
+            }
+
+            btn.innerText = "⏳ Compressing ZIP...";
+            const content = await outputZip.generateAsync({ type: "blob" });
+            
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(content);
+            link.download = "Hamina_Installer_Maps.zip";
+            link.click();
+            URL.revokeObjectURL(link.href);
+
+            btn.innerText = "✅ Download Complete!";
+            setTimeout(() => { btn.innerText = originalText; btn.disabled = false; }, 3000);
+
+        } catch (err) {
+            console.error(err);
+            alert("Error exporting ZIP: " + err.message);
+            btn.innerText = originalText;
+            btn.disabled = false;
+        }
+    });
+
+    // --- Core Drawing Math ---
+
+    // Helper to safely extract rotation/azimuth
+    function getApRotation(ap) {
+        if (ap.orientation && ap.orientation.rotation !== undefined) return ap.orientation.rotation;
+        if (ap.azimuth !== undefined && ap.azimuth !== null) return ap.azimuth;
+        if (ap.radios && ap.radios.length > 0) {
+            const radioWithAzimuth = ap.radios.find(r => r.azimuth !== undefined && r.azimuth !== null);
+            if (radioWithAzimuth) return radioWithAzimuth.azimuth;
+        }
+        return null;
+    }
+
+    function drawAPsOnContext(ctx, floorName, nativeWidth, nativeHeight, userScale, renderRatio) {
+        const allAPs = openIntentData.accesspoints || openIntentData.accessPoints;
+        if (!allAPs) return;
+        
+        let aps = allAPs.filter(ap => ap.floorplan_name === floorName);
+
+        // --- Z-INDEX SORTING ---
+        // We want APs with antennas (directional) to render ON TOP of omni APs.
+        // Array.sort renders first elements bottom, last elements top.
+        aps.sort((a, b) => {
+            const hasRotA = getApRotation(a) !== null ? 1 : 0;
+            const hasRotB = getApRotation(b) !== null ? 1 : 0;
+            return hasRotA - hasRotB; 
+        });
+
+        // Calculate dynamic base scale based on native map dimensions
+        const maxDimension = Math.max(nativeWidth, nativeHeight);
+        const autoScale = Math.max(maxDimension / 2000, 0.5); 
+        
+        // Final scale applies user slider AND the canvas render ratio (so previews don't have massive icons)
+        const finalScale = autoScale * userScale * renderRatio;
+
+        aps.forEach(ap => {
+            let x = 0, y = 0;
+            if (ap.coordinates) {
+                const coordObj = ap.coordinates.find(c => c.coordinate_xyz && c.coordinate_xyz.unit === 'pixels');
+                if (coordObj) {
+                    x = coordObj.coordinate_xyz.x;
+                    y = coordObj.coordinate_xyz.y;
+                }
+            } else if (ap.x !== undefined && ap.y !== undefined) {
+                x = ap.x;
+                y = ap.y;
+            }
+
+            if (x === 0 && y === 0) return;
+
+            // Invert Y-Axis (Hamina origin is bottom-left, Canvas is top-left)
+            y = nativeHeight - y;
+            
+            // Adjust coordinates to current canvas render ratio
+            x = x * renderRatio;
+            y = y * renderRatio;
+
+            const color = ap.display_color || ap.color || '#4687f0';
+            let name = ap.name || "";
+            name = name.replace("Access Point ", ""); 
+
+            const rotationDeg = getApRotation(ap);
+
+            drawHaminaTeardrop(ctx, x, y, name, rotationDeg, color, finalScale);
+        });
+    }
+
+    function drawHaminaTeardrop(ctx, x, y, name, rotationDeg, color, scale) {
+        const radius = AP_RADIUS_BASE * scale; 
+        
+        ctx.beginPath();
+        
+        if (rotationDeg !== null && rotationDeg !== undefined) {
+            // Adjust Hamina rotation to Canvas angle (compensating for inverted Y)
+            const angleRad = -(rotationDeg - 90) * Math.PI / 180;
+            
+            const pointerLength = 15 * scale;  
+            const pointerWidthAngle = Math.PI / 6; 
+            
+            const tipX = x + (radius + pointerLength) * Math.cos(angleRad);
+            const tipY = y + (radius + pointerLength) * Math.sin(angleRad);
+            
+            // Draw Unified Teardrop Shape
+            ctx.arc(x, y, radius, angleRad + pointerWidthAngle, angleRad - pointerWidthAngle, false);
+            ctx.lineTo(tipX, tipY);
+        } else {
+            ctx.arc(x, y, radius, 0, 2 * Math.PI);
+        }
+        ctx.closePath();
+        
+        // Setup shadow mimicking the Hamina UI
+        ctx.shadowColor = "rgba(0,0,0,0.4)";
+        ctx.shadowBlur = 8 * scale;
+        ctx.shadowOffsetX = 2 * scale;
+        ctx.shadowOffsetY = 4 * scale;
+        
+        // Fill Shape
+        ctx.fillStyle = color;
+        ctx.fill();
+        
+        // Turn off shadow for crisp borders and text
+        ctx.shadowBlur = 0;
+        ctx.shadowOffsetX = 0;
+        ctx.shadowOffsetY = 0;
+        
+        // Draw White Border
+        ctx.lineWidth = 3 * scale;
+        ctx.strokeStyle = 'white';
+        ctx.stroke();
+
+        // Draw Centered Text
+        ctx.fillStyle = 'white';
+        ctx.font = `bold ${16 * scale}px Arial`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(name, x, y + (1 * scale)); 
+    }
+</script>
+
+</body>
+</html>
