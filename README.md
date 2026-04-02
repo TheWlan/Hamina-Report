@@ -53,6 +53,10 @@ Designed for users who want to modify an existing **Hamina PDF Report** into a p
 
 ---
 
+## 🔗 Live Tools
+* [Launch Quick Image Exporter](https://thewlan.github.io/Hamina-Report/HaminaReport.html)
+* [Launch Advanced Report Generator](https://thewlan.github.io/Hamina-Report/HaminaReportExport.html)
+
 ## 💡 Technical Notes
 * **No Server Uploads:** All processing happens locally in your browser. Your project data and floor plans never leave your computer.
 * **Memory Safety:** When generating massive A1 maps, the tool processes images sequentially to prevent browser crashes on high-resolution assets.
